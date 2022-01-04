@@ -1,0 +1,337 @@
+SERVICES_TO_BUILD = ''
+
+BUGFIX_STAGES=["BUILD","SONAR","SONAR_QG"]
+
+FEATURE_STAGES=["BUILD"]
+
+DEVELOP_STAGES=["BUILD"]
+
+QA_STAGES=["BUILD"]
+
+jobStages=[]
+
+pipeline{
+
+    agent{
+
+        label 'EASlave'
+
+    }
+
+            options {
+
+        buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '3', daysToKeepStr: '', numToKeepStr: '3')
+
+    }
+
+            stages{
+
+                        stage('Repository Analysis'){
+
+                            steps{                                   
+
+                                                script{                                                  
+
+                                                            notifyCIBitbucket('INPROGRESS')
+
+                                                            //echo bat(returnStdout: true, script: 'env')
+
+                                                            print "Branch name: $env.BRANCH_NAME"
+
+                                                            print "Job name is : $env.JOB_BASE_NAME"
+
+                                                            print "Git Commit id : ${env.GIT_COMMIT}"
+
+                                                           
+
+                                                            def branchType = env.BRANCH_NAME.split('/')[0]
+
+                                                            print "branch Type : ${branchType}"
+
+                                                            jobStages = getCurrentBranchStages(branchType)
+
+                                                            print "current branch stages : ${jobStages}"
+
+                                                           
+
+                                                           
+
+                                                            FOLDER_CHANGES = bat(returnStdout: true, script:'git diff --dirstat=files,0 HEAD~1')
+
+                                                                       
+
+                                                            changesAsArray = FOLDER_CHANGES.split('\n')                                                  
+
+                                                            def MAP = [:]
+
+                                                           
+
+                                                            changesAsList = changesAsArray as List
+
+                                                            changesAsList.remove(0)
+
+                                                            changesAsList.remove(0)
+
+                                                           
+
+                                                            if(!changesAsList.isEmpty()){
+
+                                                                        print "Commits are found for the following services:${changesAsList} ."
+
+                                                                        for(String folderName in changesAsList) {
+
+                                                                                    folderName = folderName.replaceFirst(/[0-9.]+%/, "").trim().split('/')[0]
+
+                                                                                    MAP.put(folderName, "build");
+
+                                                                        }
+
+                                                            }else{
+
+                                                                        print "No commits are found for services.MAVEN BUILD stage will be skipped"
+
+                                                            }                                                          
+
+                                                           
+
+                                                            SERVICES_TO_BUILD = MAP.keySet()
+
+                                                           
+
+                                                            echo "Services to Build:${SERVICES_TO_BUILD}"
+
+ 
+
+                                                           
+
+                                                            if(!SERVICES_TO_BUILD.isEmpty()){
+
+                                                                       
+
+                                                                        //Maven build stage
+
+                                                                        if(jobStages.contains("BUILD")){
+
+                                                                                    stage('Maven Build'){
+
+                                                                                                withMaven(jdk: 'JAVA_HOME', maven: 'maven3.6.0',options: [jacocoPublisher(disabled: true)], tempBinDir: '') {
+
+                                                                                                            script{
+
+                                                                                                                        for(String folderName in SERVICES_TO_BUILD){
+
+                                                                                                                                    serviceDir = WORKSPACE+'\\'+folderName
+
+                                                                                                                                    print "Current working directory: ${serviceDir}"
+
+                                                                                                                                    print "Executing MAVEN BUILD for service: ${folderName}"
+
+                                                                                                                                    dir("${serviceDir}") {                                                                                                                                          
+
+                                                                                                                                                bat "mvn clean install"                                                                                       
+
+                                                                                                                                    }
+
+                                                                                                                        }
+
+                                                                                                            }
+
+                                                                                                }
+
+                                                                                    }
+
+                                                                        }
+
+                                                            //Sonar Analysis Stage
+
+                                                                        if(jobStages.contains("SONAR")){
+
+                                                                                    stage('Sonar Analysis'){                            
+
+                                                                                                withSonarQubeEnv('EAA2_PARKZEUS_SONAR'){
+
+                                                                                                            withMaven(jdk: 'JAVA_HOME', maven: 'maven3.6.0', tempBinDir: '') {
+
+                                                                                                            dir("${serviceDir}") {
+
+                                                                                                                        bat "mvn sonar:sonar"
+
+                                                                                                            }
+
+                                                                                                }                  
+
+                                                                                    }
+
+                                                                        }
+
+                                                                        }
+
+                       //Sonar Quality Gate Stage
+
+                                                                        if(jobStages.contains("SONAR_QG")){
+
+                                                                                    stage("Sonar Quality Gate") {
+
+                                                                                    sleep(60)
+
+                                                                                    timeout(time: 2, unit: 'MINUTES') {
+
+                                                                                                waitForQualityGate abortPipeline: true
+
+                                                                                    }
+
+                                                                                    }
+
+                                                                        }                      
+
+                                                                        //Artifact Upload
+
+                                                                        if(jobStages.contains("ARTIFACT")){
+
+                                                                                    stage("Artifact Upload"){
+
+                                                                                   
+
+                                                                                    }
+
+                                                                        }
+
+                                                                       
+
+                                                                        //Local Deployment
+
+                                                                        if(jobStages.contains("LOCAL_DEPLOY")){
+
+                                                                                    stage("Local Server Deployment"){
+
+                                                                                   
+
+                                                                                    }
+
+                                                                        }
+
+                                                                       
+
+                                                                        //Docker Build
+
+                                                                        if(jobStages.contains("DOCKER")){
+
+                                                                                    stage("Docker Image Build"){
+
+                                                                                   
+
+                                                                                    }
+
+                                                                        }
+
+                                                                       
+
+                                                                        //Azure Deployment
+
+                                                                        if(jobStages.contains("AZURE_CLOUD")){
+
+                                                                                    stage("Azure Deployment"){
+
+                                                                                   
+
+                                                                                    }
+
+                                                                        }
+
+                                                            }
+
+                                                }
+
+                            }
+
+                        }
+
+            }
+
+            post{
+
+                        always{
+
+                                    jacoco()
+
+                        }
+
+                        success{
+
+                                    notifyCIBitbucket('SUCCESSFUL')
+
+                        }
+
+                        failure{
+
+                                    notifyCIBitbucket('FAILED')
+
+                        }
+
+            }
+
+}
+
+ 
+
+def List getCurrentBranchStages(String branchType){
+
+            if("feature" == branchType)
+
+                        return FEATURE_STAGES;
+
+            else if("master" == branchType)
+
+                        return MASTER_STAGES;
+
+            else if("develop" == branchType)
+
+                        return DEVELOP_STAGES;
+
+            else if("release" == branchType)
+
+                        return RELEASE_STAGES;
+
+            else if("bugfix" == branchType)
+
+                        return BUGFIX_STAGES;
+
+            else if ("IMT1" == branchType)
+
+                return IMT1_STAGES;
+
+                       
+
+}
+
+ 
+
+def notifyCIBitbucket(String state) {
+
+    notifyBitbucket(
+
+            commitSha1: env.GIT_COMMIT,
+
+            credentialsId: 'rno2kor-git-cred',
+
+            disableInprogressNotification: false,
+
+            considerUnstableAsSuccess: true,
+
+            ignoreUnverifiedSSLPeer: true,
+
+            buildStatus: state,
+
+            buildName: env.JOB_BASE_NAME,
+
+            includeBuildNumberInKey: false,
+
+            prependParentProjectKey: false,
+
+            projectKey: 'MS',
+
+            stashServerBaseUrl: 'https://sourc.com')
+
+ 
+
+}
